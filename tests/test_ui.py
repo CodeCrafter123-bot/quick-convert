@@ -54,7 +54,7 @@ def test_load_image_shows_details_and_targets(window, png_file):
     assert window.file_panel.isVisibleTo(window)
     assert "300 × 150" in window.details.text()
     labels = [item.label for item in window.wheel_items()]
-    assert sorted(labels) == ["JPEG", "PDF", "WebP"]
+    assert sorted(labels) == ["Background", "Crop", "JPEG", "PDF", "WebP"]
     assert not window.thumb.pixmap().isNull()
 
 
@@ -105,7 +105,7 @@ def test_options_dialog_shows_only_applicable_fields(window, pdf_file, out_dir):
     assert dialog.password is None  # not encrypted
     dialog.page.setValue(2)
     dialog.dpi.setValue(72)
-    dialog.destination.setText(str(out_dir / "p2.png"))
+    dialog.destination.edit.setText(str(out_dir / "p2.png"))
     req = dialog.request()
     assert req.options.pdf_page == 2 and req.options.dpi == 72
 

@@ -61,6 +61,28 @@ class ConversionOptions:
         }
 
 
+Box = tuple[int, int, int, int]  # left, top, right, bottom in source pixels
+
+
+@dataclass(frozen=True)
+class BackgroundOptions:
+    color: Color = (255, 255, 255)
+    padding: int = 64
+    radius: int = 0
+
+
+@dataclass(frozen=True)
+class EditSpec:
+    """Non-destructive edits, always applied to a fresh copy of the source."""
+
+    crop_box: Box | None = None  # in original (orientation-corrected) image pixels
+    background: BackgroundOptions | None = None
+
+    @property
+    def is_empty(self) -> bool:
+        return self.crop_box is None and self.background is None
+
+
 @dataclass(frozen=True)
 class ConversionRequest:
     source_path: Path
@@ -68,6 +90,7 @@ class ConversionRequest:
     destination_path: Path
     options: ConversionOptions = field(default_factory=ConversionOptions)
     overwrite: bool = False
+    edit: EditSpec | None = None  # set for crop/background exports
 
 
 class JobStatus(str, Enum):

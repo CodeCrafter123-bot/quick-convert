@@ -4,18 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
-    QColorDialog,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFormLayout,
-    QHBoxLayout,
     QLineEdit,
-    QMessageBox,
-    QPushButton,
     QSpinBox,
     QWidget,
 )
@@ -25,33 +20,30 @@ from app.models import (
     Capability,
     ConversionOptions,
     ConversionRequest,
+    EditSpec,
     FileInfo,
     FileType,
 )
+from app.services.editing import EDIT_TARGETS
 from app.services.output import default_output_path
 from app.storage.settings import UserSettings
+from app.ui.widgets import FORMAT_NAMES, ColorButton, DestinationField, confirm_overwrite
 
-FORMAT_NAMES = {FileType.JPEG: "JPEG", FileType.PNG: "PNG", FileType.WEBP: "WebP",
-                FileType.PDF: "PDF"}
+__all__ = ["FORMAT_NAMES", "ExportDialog", "OptionsDialog"]
 
 
-class ColorButton(QPushButton):
-    def __init__(self, color: tuple[int, int, int], parent: QWidget | None = None):
-        super().__init__(parent)
-        self.set_color(color)
-        self.clicked.connect(self._pick)
+def _default_dir(settings: UserSettings) -> Path | None:
+    out_dir = Path(settings.default_output_dir) if settings.default_output_dir else None
+    return out_dir if out_dir is not None and out_dir.is_dir() else None
 
-    def set_color(self, color: tuple[int, int, int]) -> None:
-        self.color = color
-        hex_color = "#{:02x}{:02x}{:02x}".format(*color)
-        self.setText(hex_color)
-        fg = "#000" if sum(color) > 380 else "#fff"
-        self.setStyleSheet(f"background:{hex_color}; color:{fg}; padding:4px 12px;")
 
-    def _pick(self) -> None:
-        chosen = QColorDialog.getColor(QColor(*self.color), self, "Background color")
-        if chosen.isValid():
-            self.set_color((chosen.red(), chosen.green(), chosen.blue()))
+def _buttons(dialog: QDialog, ok_text: str) -> QDialogButtonBox:
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                               | QDialogButtonBox.StandardButton.Cancel)
+    buttons.button(QDialogButtonBox.StandardButton.Ok).setText(ok_text)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    return buttons
 
 
 class OptionsDialog(QDialog):
@@ -96,49 +88,16 @@ class OptionsDialog(QDialog):
             self.keep_metadata.setChecked(settings.metadata_policy == "keep")
             form.addRow("", self.keep_metadata)
 
-        out_dir = Path(settings.default_output_dir) if settings.default_output_dir else None
-        if out_dir is not None and not out_dir.is_dir():
-            out_dir = None
-        self.destination = QLineEdit(str(default_output_path(info.path, target.extension, out_dir)))
-        browse = QPushButton("Browse…")
-        browse.clicked.connect(self._browse)
-        row = QHBoxLayout()
-        row.addWidget(self.destination, 1)
-        row.addWidget(browse)
-        form.addRow("Save as", row)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
-                                   | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Convert")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
-
-    def _browse(self) -> None:
-        ext = self.cap.output_type.extension
-        name = FORMAT_NAMES[self.cap.output_type]
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save as", self.destination.text(), f"{name} (*{ext})",
-            options=QFileDialog.Option.DontConfirmOverwrite,
-        )
-        if path:
-            self.destination.setText(path)
+        self.destination = DestinationField(
+            default_output_path(info.path, target.extension, _default_dir(settings)), target)
+        form.addRow("Save as", self.destination)
+        form.addRow(_buttons(self, "Convert"))
 
     def accept(self) -> None:
-        dest = Path(self.destination.text().strip())
-        if not dest.suffix:
-            dest = dest.with_suffix(self.cap.output_type.extension)
-            self.destination.setText(str(dest))
-        if dest.exists():
-            answer = QMessageBox.question(
-                self, "Replace file?",
-                f"'{dest.name}' already exists.\nDo you want to replace it?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-            self.overwrite = True
+        replace = confirm_overwrite(self, self.destination.path())
+        if replace is False:
+            return
+        self.overwrite = bool(replace)
         super().accept()
 
     def request(self) -> ConversionRequest:
@@ -150,5 +109,60 @@ class OptionsDialog(QDialog):
             background_color=self.background.color if self.background else None,
             keep_metadata=bool(self.keep_metadata and self.keep_metadata.isChecked()),
         )
-        return ConversionRequest(self.info.path, self.cap.output_type,
-                                 Path(self.destination.text().strip()), options, self.overwrite)
+        return ConversionRequest(self.info.path, self.cap.output_type, self.destination.path(),
+                                 options, self.overwrite)
+
+
+class ExportDialog(QDialog):
+    """Save the edited image: pick a format, quality and destination."""
+
+    def __init__(self, info: FileInfo, spec: EditSpec, settings: UserSettings,
+                 parent: QWidget | None = None):
+        super().__init__(parent)
+        self.info, self.spec = info, spec
+        self.overwrite = False
+        self.setWindowTitle("Export edited image")
+        self.setMinimumWidth(460)
+        form = QFormLayout(self)
+
+        self.format = QComboBox()
+        for target in EDIT_TARGETS:
+            self.format.addItem(FORMAT_NAMES[target], target)
+        # Keep the source format by default, PNG for PDFs or anything else.
+        start = info.file_type if info.file_type in EDIT_TARGETS else FileType.PNG
+        self.format.setCurrentIndex(EDIT_TARGETS.index(start))
+        form.addRow("Format", self.format)
+
+        self.quality = QSpinBox(minimum=1, maximum=100, value=settings.default_quality)
+        form.addRow("Quality", self.quality)
+
+        self.destination = DestinationField(
+            default_output_path(info.path, start.extension, _default_dir(settings), suffix="-edited"),
+            start)
+        form.addRow("Save as", self.destination)
+        form.addRow(_buttons(self, "Export"))
+
+        self.format.currentIndexChanged.connect(self._format_changed)
+        self._format_changed()
+
+    def target(self) -> FileType:
+        # Index, not currentData(): Qt converts the str-enum to a plain str.
+        return EDIT_TARGETS[self.format.currentIndex()]
+
+    def _format_changed(self) -> None:
+        target = self.target()
+        self.quality.setEnabled(target in (FileType.JPEG, FileType.WEBP))
+        self.destination.set_target(target)
+
+    def accept(self) -> None:
+        replace = confirm_overwrite(self, self.destination.path())
+        if replace is False:
+            return
+        self.overwrite = bool(replace)
+        super().accept()
+
+    def request(self) -> ConversionRequest:
+        target = self.target()
+        quality = self.quality.value() if self.quality.isEnabled() else None
+        return ConversionRequest(self.info.path, target, self.destination.path(),
+                                 ConversionOptions(quality=quality), self.overwrite, edit=self.spec)

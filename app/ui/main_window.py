@@ -1,17 +1,18 @@
-"""Main window: drop zone, file details, radial menu, and the job list."""
+"""Main window: drop zone, file details, action wheel, pending edits, and the job list."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from PIL import Image
 from PySide6.QtCore import QObject, QPoint, Qt, Signal
 from PySide6.QtGui import (
     QAction,
+    QCursor,
     QDragEnterEvent,
     QDragMoveEvent,
     QDropEvent,
     QGuiApplication,
-    QImage,
     QKeySequence,
     QPixmap,
 )
@@ -30,16 +31,31 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.models import Capability, ConversionJob, ConversionRequest, FileInfo, FileType, QuickConvertError
+from app.models import (
+    Capability,
+    ConversionJob,
+    ConversionRequest,
+    EditSpec,
+    FileInfo,
+    FileType,
+    QuickConvertError,
+)
 from app.services.capabilities import get_targets
+from app.services.editing import output_size, preview_edit
 from app.services.inspection import inspect_file
 from app.services.jobs import JobManager
 from app.storage.settings import UserSettings
+from app.ui.background_dialog import BackgroundDialog
+from app.ui.crop_dialog import CropDialog
 from app.ui.job_row import JobRow
-from app.ui.options_dialog import FORMAT_NAMES, OptionsDialog
+from app.ui.options_dialog import FORMAT_NAMES, ExportDialog, OptionsDialog
 from app.ui.radial_menu import RadialItem, RadialMenu
+from app.ui.widgets import hex_color, pil_to_pixmap
 
 THUMB_SIZE = 160
+PREVIEW_MAX = 1600  # downscaled working copy for previews; exports always use the source
+ACTION_CROP = "crop"
+ACTION_BACKGROUND = "background"
 
 
 def _single_local_file(event) -> Path | None:
@@ -83,11 +99,11 @@ class DropZone(QFrame):
     def _set_hint(self, active: bool, shift: bool = False) -> None:
         if not active:
             self.label.setText("Drop an image or PDF here\n"
-                               "Hold Shift while dropping to open the conversion menu")
+                               "Hold Shift while dropping to open the action wheel")
         elif shift:
-            self.label.setText("Release to open the conversion menu")
+            self.label.setText("Release to open the action wheel")
         else:
-            self.label.setText("Release to open the file (hold Shift for the menu)")
+            self.label.setText("Release to open the file (hold Shift for the wheel)")
         self.setProperty("active", active)
         self.style().unpolish(self)
         self.style().polish(self)
@@ -127,9 +143,11 @@ class MainWindow(QMainWindow):
     def __init__(self, settings: UserSettings | None = None) -> None:
         super().__init__()
         self.setWindowTitle("QuickConvert")
-        self.resize(640, 620)
+        self.resize(660, 660)
         self.settings = settings or UserSettings.load()
         self.info: FileInfo | None = None
+        self.preview_image: Image.Image | None = None
+        self.edit = EditSpec()
         self.rows: dict[str, JobRow] = {}
 
         self.signals = JobSignals()
@@ -147,14 +165,34 @@ class MainWindow(QMainWindow):
         self.details = QLabel()
         self.details.setTextFormat(Qt.TextFormat.RichText)
         self.details.setWordWrap(True)
-        self.wheel_btn = QPushButton("Convert…")
-        self.wheel_btn.setToolTip("Open the conversion wheel (Ctrl+K)")
+        self.wheel_btn = QPushButton("Actions…")
+        self.wheel_btn.setToolTip("Open the action wheel (Ctrl+K)")
         self.wheel_btn.clicked.connect(self._open_wheel_at_button)
         self.menu_btn = QToolButton()
-        self.menu_btn.setText("Convert to")
+        self.menu_btn.setText("Menu")
         self.menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu_btn.setToolTip("List menu alternative to the wheel")
         self.menu_btn.setMenu(QMenu(self.menu_btn))
+
+        # Pending edits bar (shown once a crop or background is applied)
+        self.edits_label = QLabel()
+        self.edits_label.setWordWrap(True)
+        self.export_btn = QPushButton("Export…")
+        self.export_btn.setToolTip("Save the edited image as a new file")
+        self.export_btn.clicked.connect(self.export_edits)
+        self.discard_btn = QPushButton("Discard edits")
+        self.discard_btn.clicked.connect(self.discard_edits)
+        self.edits_bar = QFrame()
+        self.edits_bar.setObjectName("EditsBar")
+        edits_layout = QVBoxLayout(self.edits_bar)
+        edits_layout.setContentsMargins(8, 6, 8, 6)
+        edits_layout.addWidget(self.edits_label)
+        edit_buttons = QHBoxLayout()
+        edit_buttons.addWidget(self.export_btn)
+        edit_buttons.addWidget(self.discard_btn)
+        edit_buttons.addStretch()
+        edits_layout.addLayout(edit_buttons)
+        self.edits_bar.hide()
 
         buttons = QHBoxLayout()
         buttons.addWidget(self.wheel_btn)
@@ -163,6 +201,7 @@ class MainWindow(QMainWindow):
         info_col = QVBoxLayout()
         info_col.addWidget(self.details)
         info_col.addLayout(buttons)
+        info_col.addWidget(self.edits_bar)
         info_col.addStretch()
         self.file_panel = QWidget()
         file_layout = QHBoxLayout(self.file_panel)
@@ -192,11 +231,12 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(
             "#DropZone { border: 2px dashed palette(mid); border-radius: 10px; }"
             "#DropZone[active=\"true\"] { border-color: palette(highlight); }"
+            "#EditsBar { border: 1px solid palette(highlight); border-radius: 6px; }"
         )
 
         open_action = QAction("Open…", self, shortcut=QKeySequence.StandardKey.Open,
                               triggered=self.choose_file)
-        wheel_action = QAction("Conversion wheel", self, shortcut=QKeySequence("Ctrl+K"),
+        wheel_action = QAction("Action wheel", self, shortcut=QKeySequence("Ctrl+K"),
                                triggered=self._open_wheel_at_cursor)
         self.addActions([open_action, wheel_action])
         self.statusBar().showMessage("Files are processed locally on this computer.")
@@ -216,14 +256,33 @@ class MainWindow(QMainWindow):
     def load_file(self, path: Path) -> bool:
         try:
             info = inspect_file(path)
+            preview = self._load_preview(info)
         except QuickConvertError as exc:
             QMessageBox.warning(self, "Cannot open file", exc.message)
             return False
         self.info = info
+        self.preview_image = preview
+        self.edit = EditSpec()
         self._show_details(info)
         self._rebuild_list_menu()
+        self._refresh_edits()
         self.file_panel.show()
         return True
+
+    @staticmethod
+    def _load_preview(info: FileInfo) -> Image.Image | None:
+        """Orientation-corrected, downscaled working copy used for every preview."""
+        if info.file_type is FileType.PDF:
+            if info.encrypted:
+                return None
+            from app.adapters.pdf import render_page
+
+            return render_page(info.path, page=1, dpi=36)
+        from app.adapters.image import load_image
+
+        im = load_image(info.path)
+        im.thumbnail((PREVIEW_MAX, PREVIEW_MAX))
+        return im
 
     def _show_details(self, info: FileInfo) -> None:
         parts = [f"<b>{info.path.name}</b>",
@@ -233,52 +292,63 @@ class MainWindow(QMainWindow):
         if info.file_type is FileType.PDF:
             parts.append("Password protected" if info.encrypted else f"{info.page_count} page(s)")
         self.details.setText("<br>".join(parts))
-        self.thumb.setPixmap(self._thumbnail(info))
 
-    def _thumbnail(self, info: FileInfo) -> QPixmap:
-        pixmap = QPixmap()
-        try:
-            if info.file_type is FileType.PDF:
-                if info.encrypted:
-                    return pixmap
-                from app.adapters.pdf import render_page
-
-                im = render_page(info.path, page=1, dpi=36).convert("RGBA")
-                qimg = QImage(im.tobytes(), im.width, im.height, QImage.Format.Format_RGBA8888)
-                pixmap = QPixmap.fromImage(qimg.copy())
-            else:
-                pixmap = QPixmap(str(info.path))
-        except QuickConvertError:
-            return QPixmap()
-        if pixmap.isNull():
-            return pixmap
-        return pixmap.scaled(THUMB_SIZE, THUMB_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
-                             Qt.TransformationMode.SmoothTransformation)
+    def _update_thumbnail(self) -> None:
+        if self.preview_image is None or self.info is None:
+            self.thumb.setPixmap(QPixmap())
+            return
+        im = self.preview_image
+        if not self.edit.is_empty:
+            im = preview_edit(im, (self.info.width, self.info.height), self.edit)
+        im = im.copy()
+        im.thumbnail((THUMB_SIZE, THUMB_SIZE))
+        self.thumb.setPixmap(pil_to_pixmap(im))
 
     # --- choosing an action ---------------------------------------------------
 
     def targets(self) -> list[Capability]:
         return get_targets(self.info) if self.info else []
 
+    def can_edit(self) -> bool:
+        return self.info is not None and self.info.file_type.is_image
+
     def wheel_items(self) -> list[RadialItem]:
-        return [RadialItem(FORMAT_NAMES[c.output_type], c, c.available, c.unavailable_reason or "")
-                for c in self.targets()]
+        items = [RadialItem(FORMAT_NAMES[c.output_type], c, c.available, c.unavailable_reason or "")
+                 for c in self.targets()]
+        if self.can_edit():
+            items += [RadialItem("Crop", ACTION_CROP, tooltip="Crop the image"),
+                      RadialItem("Background", ACTION_BACKGROUND,
+                                 tooltip="Add a colored background with padding")]
+        return items
 
     def _rebuild_list_menu(self) -> None:
         menu = self.menu_btn.menu()
         menu.clear()
         for cap in self.targets():
-            action = menu.addAction(FORMAT_NAMES[cap.output_type])
+            action = menu.addAction(f"Convert to {FORMAT_NAMES[cap.output_type]}…")
             action.setEnabled(cap.available)
             if cap.unavailable_reason:
                 action.setToolTip(cap.unavailable_reason)
-            action.triggered.connect(lambda _=False, c=cap: self.start_conversion(c))
+            action.triggered.connect(lambda _=False, c=cap: self.run_action(c))
+        if self.can_edit():
+            menu.addSeparator()
+            menu.addAction("Crop…").triggered.connect(lambda: self.run_action(ACTION_CROP))
+            menu.addAction("Add Background…").triggered.connect(
+                lambda: self.run_action(ACTION_BACKGROUND))
+
+    def run_action(self, data: Capability | str) -> None:
+        if data == ACTION_CROP:
+            self.crop_image()
+        elif data == ACTION_BACKGROUND:
+            self.add_background()
+        else:
+            self.start_conversion(data)
 
     def open_wheel(self, global_center: QPoint) -> RadialMenu | None:
         if self.info is None:
             return None
         wheel = RadialMenu(self.wheel_items(), self.info.path.name, self)
-        wheel.triggered.connect(self.start_conversion)
+        wheel.triggered.connect(self.run_action)
         wheel.popup_at(global_center)
         return wheel
 
@@ -289,9 +359,57 @@ class MainWindow(QMainWindow):
         if self.info is None:
             self.choose_file()
             return
-        from PySide6.QtGui import QCursor
-
         self.open_wheel(QCursor.pos())
+
+    # --- editing ---------------------------------------------------------------
+
+    def crop_image(self) -> None:
+        if not self.can_edit() or self.preview_image is None:
+            return
+        size = (self.info.width, self.info.height)
+        dialog = CropDialog(pil_to_pixmap(self.preview_image), size, self.edit.crop_box, self)
+        if dialog.exec() == CropDialog.DialogCode.Accepted:
+            self.set_edit(EditSpec(dialog.box(), self.edit.background))
+
+    def add_background(self) -> None:
+        if not self.can_edit() or self.preview_image is None:
+            return
+        size = (self.info.width, self.info.height)
+        dialog = BackgroundDialog(self.preview_image, size, self.edit, self)
+        if dialog.exec() == BackgroundDialog.DialogCode.Accepted:
+            self.set_edit(dialog.spec())
+
+    def set_edit(self, spec: EditSpec) -> None:
+        self.edit = spec
+        self._refresh_edits()
+
+    def discard_edits(self) -> None:
+        self.set_edit(EditSpec())
+
+    def _refresh_edits(self) -> None:
+        self._update_thumbnail()
+        if self.edit.is_empty or self.info is None:
+            self.edits_bar.hide()
+            return
+        parts = []
+        if self.edit.crop_box is not None:
+            left, top, right, bottom = self.edit.crop_box
+            parts.append(f"Crop {right - left} × {bottom - top}")
+        if self.edit.background is not None:
+            bg = self.edit.background
+            parts.append(f"Background {hex_color(bg.color)}, {bg.padding} px"
+                         + (f", radius {bg.radius}" if bg.radius else ""))
+        width, height = output_size(self.info.width, self.info.height, self.edit)
+        self.edits_label.setText(f"<b>Edits:</b> {' · '.join(parts)}<br>"
+                                 f"Result {width} × {height} px · original unchanged")
+        self.edits_bar.show()
+
+    def export_edits(self) -> None:
+        if self.info is None or self.edit.is_empty:
+            return
+        dialog = ExportDialog(self.info, self.edit, self.settings, self)
+        if dialog.exec() == ExportDialog.DialogCode.Accepted:
+            self.submit(dialog.request())
 
     # --- running jobs ---------------------------------------------------------
 

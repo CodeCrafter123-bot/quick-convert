@@ -24,6 +24,17 @@ from app.services.output import atomic_output
 def validate(request: ConversionRequest) -> FileInfo:
     """Raise QuickConvertError if the request cannot run; return the inspected source."""
     info = inspect_file(request.source_path)
+    if request.edit is not None:
+        from app.services.editing import validate_edit
+
+        validate_edit(info, request.edit, request.target_format, request.options)
+    else:
+        _validate_conversion(info, request)
+    _validate_destination(info, request)
+    return info
+
+
+def _validate_conversion(info: FileInfo, request: ConversionRequest) -> None:
     cap = get_capability(info.file_type, request.target_format)
     if cap is None:
         raise QuickConvertError(
@@ -61,6 +72,8 @@ def validate(request: ConversionRequest) -> FileInfo:
                 f"Page {page} does not exist; the document has {info.page_count} page(s).",
             )
 
+
+def _validate_destination(info: FileInfo, request: ConversionRequest) -> None:
     dest = Path(request.destination_path)
     if dest.suffix.lower() not in _valid_suffixes(request.target_format):
         raise QuickConvertError(
@@ -71,7 +84,6 @@ def validate(request: ConversionRequest) -> FileInfo:
         raise QuickConvertError(ErrorCode.OUTPUT_EXISTS, "The output cannot replace the original file.")
     if dest.exists() and not request.overwrite:
         raise QuickConvertError(ErrorCode.OUTPUT_EXISTS, f"'{dest.name}' already exists.")
-    return info
 
 
 def run(request: ConversionRequest, check_cancel: CheckCancel = _noop,
@@ -82,7 +94,13 @@ def run(request: ConversionRequest, check_cancel: CheckCancel = _noop,
     target = request.target_format
     dest = Path(request.destination_path)
 
-    if target is FileType.PDF:
+    if request.edit is not None:
+        from app.services.editing import save_edit
+
+        verify = partial(image_adapter.verify_image, expected=target)
+        work = partial(save_edit, info.path, request.edit, target=target, quality=opts.quality,
+                       check_cancel=check_cancel)
+    elif target is FileType.PDF:
         from app.adapters import pdf as pdf_adapter
 
         verify = pdf_adapter.verify_pdf

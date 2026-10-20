@@ -38,10 +38,15 @@ image at the chosen DPI (default 150). Metadata is stripped unless `keep_metadat
 
 - Drag a file onto the drop zone, or click **Choose File…** (Ctrl+O).
 - **Hold Shift while dropping** to open the conversion wheel at the drop point.
-- Or click **Convert…** / press **Ctrl+K** for the wheel, or use the **Convert to** list menu.
+- Or click **Actions…** / press **Ctrl+K** for the wheel, or use the **Menu** list.
 - Wheel keys: arrows/Tab move, Enter activates, 1–9 pick directly, Esc closes.
 - Pick options and where to save, then watch progress in **Jobs**; Cancel stops a running job.
   When done, use **Open File** or **Show in Folder**.
+- **Crop** (images): drag the handles or the selection, draw a new one outside it, lock an aspect
+  ratio, or nudge with arrow keys (Shift = 10 px). The size shown is in original pixels.
+- **Background** (images): pick a color or preset, padding and corner radius with a live preview.
+- Crop and background stack. The thumbnail shows the result; **Export…** saves it as PNG/JPEG/WebP
+  in the background, **Discard edits** reverts. The original file is never changed.
 
 ## Architecture
 
@@ -61,7 +66,7 @@ UI request → validation → capability lookup → job queue → adapter → te
 | `app/adapters/` | Pillow (images) and PyMuPDF (PDF) engines |
 | `app/storage/settings.py` | JSON settings in `%APPDATA%\QuickConvert` |
 | `app/limits.py` | resource limits |
-| `app/ui/` | main window + drop zone, radial menu (`geometry.py` holds its testable math), options dialog, job rows |
+| `app/ui/` | main window + drop zone, radial menu, options/export, crop and background dialogs, job rows. `geometry.py` and `crop_geometry.py` hold the Qt-free, unit-tested math |
 
 Error codes: `UNSUPPORTED_PAIR`, `INVALID_INPUT`, `PASSWORD_REQUIRED`, `PERMISSION_DENIED`,
 `OUTPUT_EXISTS`, `RESOURCE_LIMIT`, `CONVERSION_FAILED`, `CANCELLED`.
@@ -71,7 +76,7 @@ Error codes: `UNSUPPORTED_PAIR`, `INVALID_INPUT`, `PASSWORD_REQUIRED`, `PERMISSI
 - [x] Phase 1 — repo, venv, lock file, engine proven on fixtures
 - [x] Phase 2 — conversion core (M1: engine)
 - [x] Phase 3 — desktop UI: main window, drop zone, radial menu, progress/cancel (M2)
-- [ ] Phase 4 — crop/background dialogs (core logic done; UI pending) (M3)
+- [x] Phase 4 — crop/background dialogs, edit export as background job (M3)
 - [ ] Phase 5 — system-wide drag+Shift prototype, hardening
 - [ ] Phase 6 — PyInstaller package, clean-machine test (M4)
 

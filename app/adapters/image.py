@@ -8,7 +8,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
 
 from app import limits
-from app.models import Color, ErrorCode, FileType, QuickConvertError
+from app.models import Box, Color, ErrorCode, FileType, QuickConvertError
 
 Image.MAX_IMAGE_PIXELS = limits.MAX_IMAGE_PIXELS
 
@@ -101,9 +101,6 @@ def verify_image(path: Path, expected: FileType) -> None:
 
 
 # --- Editing ---------------------------------------------------------------
-
-Box = tuple[int, int, int, int]  # left, top, right, bottom in source pixels
-
 
 def crop(im: Image.Image, box: Box) -> Image.Image:
     left, top, right, bottom = box

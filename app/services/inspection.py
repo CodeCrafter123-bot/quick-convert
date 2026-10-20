@@ -62,6 +62,9 @@ def _inspect_image(path: Path, size: int, sniffed: FileType) -> FileInfo:
         with Image.open(path) as im:
             fmt = _PIL_FORMATS.get(im.format or "")
             width, height = im.size
+            # Report the size as displayed: EXIF orientations 5-8 rotate by 90 degrees.
+            if im.getexif().get(0x0112) in (5, 6, 7, 8):
+                width, height = height, width
     except (UnidentifiedImageError, OSError, SyntaxError):
         raise QuickConvertError(ErrorCode.INVALID_INPUT, f"'{path.name}' is corrupt or unreadable.")
     if fmt is not sniffed:
