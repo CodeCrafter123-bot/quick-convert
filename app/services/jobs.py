@@ -71,6 +71,11 @@ class JobManager:
             job = self._jobs.get(job_id)
             return dataclasses.replace(job) if job else None
 
+    def active_count(self) -> int:
+        """Jobs that are queued or running."""
+        with self._lock:
+            return sum(not job.status.is_final for job in self._jobs.values())
+
     def wait(self, job_id: str, timeout: float | None = None) -> ConversionJob | None:
         future = self._futures.get(job_id)
         if future is not None:

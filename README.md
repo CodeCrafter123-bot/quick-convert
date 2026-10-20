@@ -48,6 +48,24 @@ image at the chosen DPI (default 150). Metadata is stripped unless `keep_metadat
 - Crop and background stack. The thumbnail shows the result; **Export…** saves it as PNG/JPEG/WebP
   in the background, **Discard edits** reverts. The original file is never changed.
 
+## Using it from anywhere (Windows)
+
+QuickConvert keeps running in the **tray** when you close its window (right-click the tray icon →
+Quit to exit; it asks first if jobs are still running).
+
+- **Shift+drag from any app:** start dragging a file in Explorer (or anywhere), hold **Shift**, and
+  a round *Drop here* bubble appears beside the cursor. Drop the file on it and the action wheel
+  opens there. Toggle it in the tray menu. It reads only the mouse/Shift state (no hooks, no
+  admin rights), and the bubble sits beside the cursor so other apps' Shift+drags are untouched.
+- **Explorer "Send to":** tray menu → *Add to Explorer "Send to" menu*. Then right-click any file →
+  Send to → QuickConvert.
+- **One instance:** launching again (or Send to) hands the file to the running app.
+- **Safe drops:** every drop is accepted as *Copy*. Explorer's Shift+drag means *Move*, and
+  accepting a move could let Explorer delete the original; drops that only allow Move are refused.
+
+Diagnostics are logged to `%LOCALAPPDATA%\QuickConvert\logs\quickconvert.log` (technical details
+only, never file contents). Settings live in `%APPDATA%\QuickConvert\settings.json`.
+
 ## Architecture
 
 ```
@@ -66,7 +84,9 @@ UI request → validation → capability lookup → job queue → adapter → te
 | `app/adapters/` | Pillow (images) and PyMuPDF (PDF) engines |
 | `app/storage/settings.py` | JSON settings in `%APPDATA%\QuickConvert` |
 | `app/limits.py` | resource limits |
-| `app/ui/` | main window + drop zone, radial menu, options/export, crop and background dialogs, job rows. `geometry.py` and `crop_geometry.py` hold the Qt-free, unit-tested math |
+| `app/integration/` | Shift+drag gesture state machine, Windows input polling + Send to shortcut, single-instance IPC |
+| `app/logging_setup.py` | rotating local log |
+| `app/ui/` | main window + drop zone, radial menu, options/export, crop and background dialogs, job rows, tray, drop bubble, safe drag-and-drop (`dnd.py`). `geometry.py` and `crop_geometry.py` hold the Qt-free, unit-tested math |
 
 Error codes: `UNSUPPORTED_PAIR`, `INVALID_INPUT`, `PASSWORD_REQUIRED`, `PERMISSION_DENIED`,
 `OUTPUT_EXISTS`, `RESOURCE_LIMIT`, `CONVERSION_FAILED`, `CANCELLED`.
@@ -77,7 +97,7 @@ Error codes: `UNSUPPORTED_PAIR`, `INVALID_INPUT`, `PASSWORD_REQUIRED`, `PERMISSI
 - [x] Phase 2 — conversion core (M1: engine)
 - [x] Phase 3 — desktop UI: main window, drop zone, radial menu, progress/cancel (M2)
 - [x] Phase 4 — crop/background dialogs, edit export as background job (M3)
-- [ ] Phase 5 — system-wide drag+Shift prototype, hardening
+- [x] Phase 5 — system-wide Shift+drag bubble, tray, Send to, single instance, safe drops, logging, quit confirmation
 - [ ] Phase 6 — PyInstaller package, clean-machine test (M4)
 
 ## Licensing

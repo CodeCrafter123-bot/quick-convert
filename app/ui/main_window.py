@@ -12,7 +12,6 @@ from PySide6.QtGui import (
     QDragEnterEvent,
     QDragMoveEvent,
     QDropEvent,
-    QGuiApplication,
     QKeySequence,
     QPixmap,
 )
@@ -47,6 +46,7 @@ from app.services.jobs import JobManager
 from app.storage.settings import UserSettings
 from app.ui.background_dialog import BackgroundDialog
 from app.ui.crop_dialog import CropDialog
+from app.ui.dnd import accept_safely, shift_held, single_local_file
 from app.ui.job_row import JobRow
 from app.ui.options_dialog import FORMAT_NAMES, ExportDialog, OptionsDialog
 from app.ui.radial_menu import RadialItem, RadialMenu
@@ -56,20 +56,6 @@ THUMB_SIZE = 160
 PREVIEW_MAX = 1600  # downscaled working copy for previews; exports always use the source
 ACTION_CROP = "crop"
 ACTION_BACKGROUND = "background"
-
-
-def _single_local_file(event) -> Path | None:
-    urls = event.mimeData().urls()
-    if len(urls) == 1 and urls[0].isLocalFile():
-        path = Path(urls[0].toLocalFile())
-        if path.is_file():
-            return path
-    return None
-
-
-def _shift_held(event) -> bool:
-    mods = event.modifiers() | QGuiApplication.queryKeyboardModifiers()
-    return bool(mods & Qt.KeyboardModifier.ShiftModifier)
 
 
 class DropZone(QFrame):
@@ -109,28 +95,26 @@ class DropZone(QFrame):
         self.style().polish(self)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
-        if _single_local_file(event):
-            event.acceptProposedAction()
-            self._set_hint(True, _shift_held(event))
+        if single_local_file(event) and accept_safely(event):
+            self._set_hint(True, shift_held(event))
         else:
             event.ignore()
 
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # noqa: N802
-        event.acceptProposedAction()
-        self._set_hint(True, _shift_held(event))
+        if accept_safely(event):
+            self._set_hint(True, shift_held(event))
 
     def dragLeaveEvent(self, event) -> None:  # noqa: N802
         self._set_hint(False)
 
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
         self._set_hint(False)
-        path = _single_local_file(event)
-        if path is None:
+        path = single_local_file(event)
+        if path is None or not accept_safely(event):
             event.ignore()
             return
-        event.acceptProposedAction()
         global_pos = self.mapToGlobal(event.position().toPoint())
-        self.file_dropped.emit(path, _shift_held(event), global_pos)
+        self.file_dropped.emit(path, shift_held(event), global_pos)
 
 
 class JobSignals(QObject):
@@ -140,8 +124,11 @@ class JobSignals(QObject):
 
 
 class MainWindow(QMainWindow):
+    hidden_to_tray = Signal()
+
     def __init__(self, settings: UserSettings | None = None) -> None:
         super().__init__()
+        self.hide_on_close = False  # set by the app when the tray icon is running
         self.setWindowTitle("QuickConvert")
         self.resize(660, 660)
         self.settings = settings or UserSettings.load()
@@ -248,6 +235,17 @@ class MainWindow(QMainWindow):
             self, "Choose a file", "", "Images and PDFs (*.jpg *.jpeg *.png *.webp *.pdf);;All files (*)")
         if path:
             self.load_file(Path(path))
+
+    def bring_to_front(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def open_file_with_wheel(self, path: Path, global_pos: QPoint | None = None) -> None:
+        """Entry point for drops from outside the window (bubble, Send to, second instance)."""
+        self.bring_to_front()
+        if self.load_file(path):
+            self.open_wheel(global_pos or QCursor.pos())
 
     def _on_drop(self, path: Path, shift: bool, global_pos: QPoint) -> None:
         if self.load_file(path) and shift:
@@ -443,6 +441,33 @@ class MainWindow(QMainWindow):
         else:
             row.update_job(job)
 
-    def closeEvent(self, event) -> None:  # noqa: N802
+    # --- closing --------------------------------------------------------------
+
+    def confirm_quit(self) -> bool:
+        """Ask before cancelling running jobs. True if it's OK to quit."""
+        active = self.jobs.active_count()
+        if not active:
+            return True
+        answer = QMessageBox.question(
+            self, "Jobs still running",
+            f"{active} job(s) are still running. Cancel them and quit?\n"
+            "Unfinished outputs are removed; your originals are not affected.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def shutdown(self) -> None:
         self.jobs.shutdown()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self.hide_on_close:
+            event.ignore()
+            self.hide()
+            self.hidden_to_tray.emit()
+            return
+        if not self.confirm_quit():
+            event.ignore()
+            return
+        self.shutdown()
         super().closeEvent(event)

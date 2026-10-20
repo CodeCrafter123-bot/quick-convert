@@ -24,6 +24,9 @@ class UserSettings:
     default_quality: int = limits.DEFAULT_QUALITY
     metadata_policy: str = "strip"  # "strip" | "keep"
     theme: str = "system"
+    global_drag: bool = True  # Shift+drag bubble from any app (Windows)
+    close_to_tray: bool = True
+    tray_hint_shown: bool = False
 
     @classmethod
     def load(cls, path: Path | None = None) -> UserSettings:
