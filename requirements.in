@@ -1,0 +1,5 @@
+# Direct dependencies. Pinned set (with transitive deps) lives in requirements.txt.
+PySide6
+Pillow
+PyMuPDF  # AGPL-3.0 / commercial - review before distribution
+pytest

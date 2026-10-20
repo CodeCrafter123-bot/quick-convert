@@ -1,0 +1,8 @@
+[project]
+name = "quickconvert"
+version = "0.1.0"
+description = "Local desktop file conversion and image editing with a radial menu"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
