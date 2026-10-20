@@ -1,6 +1,8 @@
-"""Entry point: `python -m app`.
+"""Entry point.
 
-Until the desktop UI lands (Phase 3) this is a small CLI over the conversion core:
+    python -m app [FILE]          open the desktop app (optionally with a file loaded)
+
+Command-line tools over the same conversion core:
     python -m app inspect FILE
     python -m app convert FILE --to png [--out PATH] [--quality N] [--dpi N] [--page N]
     python -m app edit FILE --to png [--crop L,T,R,B] [--bg #RRGGBB --padding N --radius N]
@@ -43,7 +45,16 @@ def _box(value: str) -> tuple[int, int, int, int]:
     return tuple(parts)  # type: ignore[return-value]
 
 
+COMMANDS = {"inspect", "convert", "edit"}
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if not argv or (len(argv) == 1 and argv[0] not in COMMANDS and not argv[0].startswith("-")):
+        from app.ui.app import run_gui
+
+        return run_gui(initial_file=Path(argv[0]) if argv else None)
+
     parser = argparse.ArgumentParser(prog="quickconvert")
     sub = parser.add_subparsers(dest="command", required=True)
 

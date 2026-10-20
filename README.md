@@ -9,7 +9,8 @@ Target OS for the MVP: **Windows 11** (others later).
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python -m app --help      # CLI over the conversion core (desktop UI arrives in Phase 3)
+python -m app             # desktop app (or: python -m app photo.png)
+python -m app --help      # command-line tools over the same core
 pytest
 ```
 
@@ -33,6 +34,15 @@ Rules: input type is detected from file content, not the extension. Transparent 
 flattened onto the chosen color (white by default). Image → PDF produces one page sized to the
 image at the chosen DPI (default 150). Metadata is stripped unless `keep_metadata` is set.
 
+## Using the app
+
+- Drag a file onto the drop zone, or click **Choose File…** (Ctrl+O).
+- **Hold Shift while dropping** to open the conversion wheel at the drop point.
+- Or click **Convert…** / press **Ctrl+K** for the wheel, or use the **Convert to** list menu.
+- Wheel keys: arrows/Tab move, Enter activates, 1–9 pick directly, Esc closes.
+- Pick options and where to save, then watch progress in **Jobs**; Cancel stops a running job.
+  When done, use **Open File** or **Show in Folder**.
+
 ## Architecture
 
 ```
@@ -51,6 +61,7 @@ UI request → validation → capability lookup → job queue → adapter → te
 | `app/adapters/` | Pillow (images) and PyMuPDF (PDF) engines |
 | `app/storage/settings.py` | JSON settings in `%APPDATA%\QuickConvert` |
 | `app/limits.py` | resource limits |
+| `app/ui/` | main window + drop zone, radial menu (`geometry.py` holds its testable math), options dialog, job rows |
 
 Error codes: `UNSUPPORTED_PAIR`, `INVALID_INPUT`, `PASSWORD_REQUIRED`, `PERMISSION_DENIED`,
 `OUTPUT_EXISTS`, `RESOURCE_LIMIT`, `CONVERSION_FAILED`, `CANCELLED`.
@@ -59,7 +70,7 @@ Error codes: `UNSUPPORTED_PAIR`, `INVALID_INPUT`, `PASSWORD_REQUIRED`, `PERMISSI
 
 - [x] Phase 1 — repo, venv, lock file, engine proven on fixtures
 - [x] Phase 2 — conversion core (M1: engine)
-- [ ] Phase 3 — desktop UI: main window, drop zone, radial menu, progress/cancel (M2)
+- [x] Phase 3 — desktop UI: main window, drop zone, radial menu, progress/cancel (M2)
 - [ ] Phase 4 — crop/background dialogs (core logic done; UI pending) (M3)
 - [ ] Phase 5 — system-wide drag+Shift prototype, hardening
 - [ ] Phase 6 — PyInstaller package, clean-machine test (M4)
