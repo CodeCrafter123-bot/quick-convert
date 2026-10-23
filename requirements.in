@@ -1,5 +1,5 @@
-# Direct dependencies. Pinned set (with transitive deps) lives in requirements.txt.
-PySide6
-Pillow
-PyMuPDF  # AGPL-3.0 / commercial - review before distribution
-pytest
+# Runtime dependencies (all permissively licensed / LGPL, see docs/THIRD_PARTY_NOTICES.md).
+# Pinned versions live in requirements.txt.
+PySide6-Essentials   # Qt GUI (LGPL-3.0); Essentials avoids WebEngine and other unused modules
+Pillow               # images (MIT-CMU)
+pypdfium2            # PDF rendering (Apache-2.0 / BSD-3-Clause)

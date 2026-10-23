@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-import pymupdf
+import pypdfium2 as pdfium
 import pytest
 from PIL import Image
 
@@ -75,15 +75,31 @@ def test_jpeg_to_png_keeps_dimensions(jpeg_file, out_dir):
 
 def test_image_to_pdf_single_page_with_correct_aspect_ratio(jpeg_file, out_dir):
     dest = _convert(jpeg_file, FileType.PDF, out_dir, dpi=100)
-    with pymupdf.open(dest) as doc:
-        assert doc.page_count == 1
-        rect = doc[0].rect
-        assert rect.width == pytest.approx(320 * 72 / 100)
-        assert rect.height == pytest.approx(200 * 72 / 100)
-        images = doc[0].get_image_info()
-        assert len(images) == 1
-        bbox = pymupdf.Rect(images[0]["bbox"])
-        assert bbox.width == pytest.approx(rect.width, abs=0.5)  # no clipping
+    doc = pdfium.PdfDocument(str(dest))
+    try:
+        assert len(doc) == 1
+        width_pt, height_pt = doc[0].get_size()
+        assert width_pt == pytest.approx(320 * 72 / 100)
+        assert height_pt == pytest.approx(200 * 72 / 100)
+        # Rendered back at the same DPI, the image fills the page edge to edge (no clipping).
+        rendered = doc[0].render(scale=100 / 72).to_pil().convert("RGB")
+    finally:
+        doc.close()
+    assert rendered.size == (320, 200)
+    for xy in [(1, 1), (318, 1), (1, 198), (318, 198), (160, 100)]:
+        r, g, b = rendered.getpixel(xy)
+        assert r > 170 and g < 90 and b < 90, (xy, (r, g, b))  # the red fixture, not white
+
+
+def test_transparent_image_to_pdf(transparent_png, out_dir):
+    dest = _convert(transparent_png, FileType.PDF, out_dir, dpi=72)
+    doc = pdfium.PdfDocument(str(dest))
+    try:
+        rendered = doc[0].render(scale=1, fill_color=(255, 255, 255, 255)).to_pil().convert("RGB")
+    finally:
+        doc.close()
+    assert rendered.getpixel((150, 50))[0] > 200 and rendered.getpixel((150, 50))[1] < 60  # red half
+    assert min(rendered.getpixel((20, 50))) > 230  # transparent half shows page, not black
 
 
 def test_pdf_page_to_png_uses_selected_page_and_dpi(pdf_file, out_dir):
@@ -213,4 +229,12 @@ def test_unicode_paths(tmp_path, jpeg_file):
 def test_wrong_extension_for_target(jpeg_file, out_dir):
     with pytest.raises(QuickConvertError) as err:
         conversion.run(ConversionRequest(jpeg_file, FileType.PNG, out_dir / "x.jpg"))
+    assert err.value.code is ErrorCode.INVALID_INPUT
+
+
+def test_corrupt_pdf_is_rejected(tmp_path):
+    bad = tmp_path / "broken.pdf"
+    bad.write_bytes(b"%PDF-1.4\n this is not really a pdf")
+    with pytest.raises(QuickConvertError) as err:
+        inspect_file(bad)
     assert err.value.code is ErrorCode.INVALID_INPUT

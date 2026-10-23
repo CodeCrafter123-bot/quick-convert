@@ -1,0 +1,4 @@
+-r requirements.in
+pytest
+pypdf          # test fixtures only (creates password-protected PDFs)
+pyinstaller    # packaging

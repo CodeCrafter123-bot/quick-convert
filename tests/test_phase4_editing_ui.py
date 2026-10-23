@@ -36,11 +36,6 @@ from tests.conftest import assert_no_temp_files  # noqa: E402
 from tests.test_ui import wait_until  # noqa: E402
 
 
-@pytest.fixture(scope="module")
-def qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
 def window(qapp, monkeypatch):
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: None)

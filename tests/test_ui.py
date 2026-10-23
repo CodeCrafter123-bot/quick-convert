@@ -20,11 +20,6 @@ from app.ui.options_dialog import OptionsDialog  # noqa: E402
 from app.ui.radial_menu import RadialItem, RadialMenu  # noqa: E402
 
 
-@pytest.fixture(scope="module")
-def qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
 def window(qapp, monkeypatch):
     warnings = []

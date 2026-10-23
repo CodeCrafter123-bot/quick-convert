@@ -27,11 +27,6 @@ from tests.test_ui import wait_until  # noqa: E402
 ALL = Qt.DropAction.CopyAction | Qt.DropAction.MoveAction | Qt.DropAction.LinkAction
 
 
-@pytest.fixture(scope="module")
-def qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
 def no_dialogs(monkeypatch):
     monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: None)

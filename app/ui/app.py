@@ -10,6 +10,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QPoint
 from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
+from app import __version__
 from app.integration import windows
 from app.integration.single_instance import InstanceServer, send_to_running
 from app.logging_setup import setup_logging
@@ -139,6 +140,8 @@ def _install_excepthook(log_path: Path | None) -> None:
 def run_gui(argv: list[str] | None = None, initial_file: Path | None = None) -> int:
     log_path = setup_logging()
     _install_excepthook(log_path)
+    log.info("QuickConvert %s starting (%s build, %s)", __version__,
+             "packaged" if getattr(sys, "frozen", False) else "development", sys.platform)
     qapp = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
     qapp.setApplicationName("QuickConvert")
     qapp.setOrganizationName("QuickConvert")

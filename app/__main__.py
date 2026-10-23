@@ -6,14 +6,17 @@ Command-line tools over the same conversion core:
     python -m app inspect FILE
     python -m app convert FILE --to png [--out PATH] [--quality N] [--dpi N] [--page N]
     python -m app edit FILE --to png [--crop L,T,R,B] [--bg #RRGGBB --padding N --radius N]
+    python -m app selftest [--report FILE.json]   check every supported conversion in this build
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
+from app import __version__
 from app.models import ConversionOptions, ConversionRequest, FileType, QuickConvertError
 from app.services import conversion
 from app.services.capabilities import get_targets
@@ -45,18 +48,27 @@ def _box(value: str) -> tuple[int, int, int, int]:
     return tuple(parts)  # type: ignore[return-value]
 
 
-COMMANDS = {"inspect", "convert", "edit"}
+COMMANDS = {"inspect", "convert", "edit", "selftest", "--version", "-h", "--help"}
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    # The windowed .exe has no console streams; keep argparse/print from crashing.
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")
     if not argv or (len(argv) == 1 and argv[0] not in COMMANDS and not argv[0].startswith("-")):
         from app.ui.app import run_gui
 
         return run_gui(initial_file=Path(argv[0]) if argv else None)
 
     parser = argparse.ArgumentParser(prog="quickconvert")
+    parser.add_argument("--version", action="version", version=f"QuickConvert {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("selftest", help="run every supported conversion and report")
+    p.add_argument("--report", type=Path, help="also write the results as JSON")
 
     p = sub.add_parser("inspect", help="show file type and supported targets")
     p.add_argument("file", type=Path)
@@ -84,6 +96,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--overwrite", action="store_true")
 
     args = parser.parse_args(argv)
+    if args.command == "selftest":
+        from app.selftest import main as selftest_main
+
+        return selftest_main(args.report)
     try:
         if args.command == "inspect":
             info = inspect_file(args.file)

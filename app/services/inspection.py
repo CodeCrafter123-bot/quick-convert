@@ -79,14 +79,14 @@ def _inspect_image(path: Path, size: int, sniffed: FileType) -> FileInfo:
 
 
 def _inspect_pdf(path: Path, size: int) -> FileInfo:
-    import pymupdf
+    from app.adapters.pdf import pdf_page_count
 
     try:
-        with pymupdf.open(path, filetype="pdf") as doc:
-            encrypted = bool(doc.needs_pass)
-            page_count = None if encrypted else doc.page_count
-    except (pymupdf.FileDataError, RuntimeError, ValueError):
-        raise QuickConvertError(ErrorCode.INVALID_INPUT, f"'{path.name}' is corrupt or unreadable.")
+        page_count, encrypted = pdf_page_count(path), False
+    except QuickConvertError as exc:
+        if exc.code is not ErrorCode.PASSWORD_REQUIRED:
+            raise
+        page_count, encrypted = None, True
     if page_count is not None:
         if page_count == 0:
             raise QuickConvertError(ErrorCode.INVALID_INPUT, f"'{path.name}' has no pages.")

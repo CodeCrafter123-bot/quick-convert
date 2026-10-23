@@ -31,9 +31,9 @@ def _adapter_status(adapter: str, input_type: FileType, output_type: FileType) -
     """Return None if available, otherwise a reason."""
     if adapter == "pdf":
         try:
-            import pymupdf  # noqa: F401
+            import pypdfium2  # noqa: F401
         except ImportError:
-            return "PDF support (PyMuPDF) is not installed."
+            return "PDF support (pypdfium2) is not installed."
     if W in (input_type, output_type):
         from PIL import features
 

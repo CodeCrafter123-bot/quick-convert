@@ -64,7 +64,8 @@ def save_image(im: Image.Image, path: Path, target: FileType, *, quality: int | 
     elif target is FileType.PNG:
         if im.mode == "CMYK":
             im = im.convert("RGB")
-        kwargs.update(optimize=False)
+        # Level 3: ~35% faster than the default (6) for ~7% larger files on photos.
+        kwargs.update(compress_level=3)
     im.save(path, format=PIL_FORMAT[target], **kwargs)
 
 
